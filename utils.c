@@ -85,6 +85,15 @@ bool read_line(char* buffer, size_t size_of_buffer, FILE* file)
         fatal("Null character in input.");
     assert(n_chars == len);
 
+    if(line[len - 1] == '\n' || line[len - 1] == EOF){
+        line[len - 1] = '\0';
+        len--;
+    }
+    if(line[len - 1] == '\n' || line[len - 1] == EOF){
+        line[len - 1] = '\0';
+        len--;
+    }
+    
     if (len > size_of_buffer)
         fatal("Line too long: %d > %d.", len, size_of_buffer - 1);
     memcpy(buffer, line, len +1);
