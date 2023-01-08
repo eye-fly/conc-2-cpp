@@ -38,6 +38,7 @@ struct Executor {
     pthread_cond_t mainT;
     pthread_cond_t input_reader, monitors;
     char input_buffer[MAX_INPUT_CHARACTERS];
+    int delay;
     int crr_command;
     int last_command;
     char ** spited_command;
@@ -90,6 +91,10 @@ void* input_reader_main(void* data){
         while(ex->crr_command >  ex->last_command)
             ASSERT_ZERO(pthread_cond_wait(&ex->input_reader, &ex->mutex));
         ASSERT_ZERO(pthread_mutex_unlock(&ex->mutex));
+        if(ex->delay != 0 ){
+            usleep(1000ll*ex->delay);
+            ex->delay = 0;
+        }
     }
     if(!quitting){
         strcpy(ex->input_buffer,"quit");
@@ -264,9 +269,7 @@ int main(){
                 if(executor.tasks[tsk_nr].task_pid != -1)
                     kill(executor.tasks[tsk_nr].task_pid, SIGINT);
             } else if(!strcmp(executor.spited_command[0], "sleep")){
-                ASSERT_ZERO(pthread_mutex_unlock(&executor.mutex));
-                usleep(1000*atoi(executor.spited_command[1]));
-                ASSERT_ZERO(pthread_mutex_lock(&executor.mutex));
+                executor.delay = atoi(executor.spited_command[1]);
             } else if(!strcmp(executor.spited_command[0], "quit")){ 
                 quiting = 0;
                 for(int i =0; executor.tasks_n >i;i ++){
