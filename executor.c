@@ -1,5 +1,4 @@
 #include <assert.h>
-// #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <pthread.h>
@@ -28,7 +27,7 @@ struct Task{
     pthread_mutex_t out_mutex, err_mutex;
     char out_buffer[2][MAX_OUTPUT_CHARACTERS];
     char err_buffer[2][MAX_OUTPUT_CHARACTERS];
-    int last_out, ast_err;
+    int last_out, last_err;
     int out_pipe, err_pipe;
 
     struct Executor* ex;
@@ -114,7 +113,24 @@ void* out_reader_main(void* data){
         fprintf(stderr,"on: %d recived: %s\n", tsk->last_out, tsk->out_buffer[ tsk->last_out ]);
         ASSERT_ZERO(pthread_mutex_unlock(&tsk->out_mutex));
     }
-    fprintf(stderr, "task: %d reader cloasing\n", tsk->task_pid);
+    fprintf(stderr, "pid tsak: %d reader cloasing\n", tsk->task_pid);
+    return NULL;
+}
+
+void* err_reader_main(void* data){
+    struct Task* tsk = data;
+
+    FILE *f_in = fdopen(tsk->err_pipe,"r");
+    if(f_in == NULL)
+        fatal("fdopen filed");
+     
+    while(read_line(tsk->err_buffer[ (tsk->last_err+1)%2 ], MAX_OUTPUT_CHARACTERS, f_in)){
+        ASSERT_ZERO(pthread_mutex_lock(&tsk->err_mutex));
+        tsk->last_err = (tsk->last_err+1)%2;
+        fprintf(stderr,"on: %d recived err: %s\n", tsk->last_err, tsk->err_buffer[ tsk->last_err ]);
+        ASSERT_ZERO(pthread_mutex_unlock(&tsk->err_mutex));
+    }
+    fprintf(stderr, "pid tsak: %d err reader cloasing\n", tsk->task_pid);
     return NULL;
 }
 
@@ -148,7 +164,7 @@ void task_starter(struct Executor* ex){
     pid_t pid = fork();
     ASSERT_SYS_OK(pid);
     if (!pid){
-        fprintf(stderr,"tasks starting T: %d my_pid: %d \n",my_tsk_nr, getpid() );
+        fprintf(stderr,"process with tasks starting T: %d my_pid: %d \n",my_tsk_nr, getpid() );
         ASSERT_SYS_OK(close(pipe_out[0]));
         ASSERT_SYS_OK(close(pipe_err[0]));
 
@@ -170,6 +186,8 @@ void task_starter(struct Executor* ex){
     tsk->err_pipe = pipe_err[0];
     ASSERT_ZERO(pthread_create(&tsk->out_reader, NULL, out_reader_main, (void*)tsk));
     pthread_detach(tsk->out_reader);
+    ASSERT_ZERO(pthread_create(&tsk->err_reader, NULL, err_reader_main, (void*)tsk));
+    pthread_detach(tsk->err_reader);
 
     tsk->ex = ex;
     ASSERT_ZERO(pthread_create(&tsk->monitor, NULL, task_monitor_main, (void*)tsk));
@@ -188,7 +206,15 @@ void read_out(struct Executor* ex, char* c_nr){
     printf("Task %d stdout: '%s'.\n", nr, ex->tasks[nr].out_buffer[indx]);
     ASSERT_ZERO(pthread_mutex_unlock(mtx));
 }
-
+void read_err(struct Executor* ex, char* c_nr){
+    int nr = atoi(c_nr);
+    
+    pthread_mutex_t * mtx = &ex->tasks[nr].err_mutex;
+    ASSERT_ZERO(pthread_mutex_lock(mtx));
+    int indx = ex->tasks[nr].last_err;
+    printf("Task %d stderr: '%s'.\n", nr, ex->tasks[nr].err_buffer[indx]);
+    ASSERT_ZERO(pthread_mutex_unlock(mtx));
+}
 
 void finish_task(struct Executor* ex){
     
@@ -205,8 +231,6 @@ void finish_task(struct Executor* ex){
 }
 
 int main(){
-    fprintf(stderr,"main my_pid: %d \n", getpid() );
-
     struct Executor executor;
     executor_init(&executor);
  
@@ -233,12 +257,16 @@ int main(){
                 task_starter(&executor);
             } else if(!strcmp(executor.spited_command[0], "out")){
                 read_out(&executor, executor.spited_command[1]);
+            } else if(!strcmp(executor.spited_command[0], "err")){
+                read_err(&executor, executor.spited_command[1]);
             } else if(!strcmp(executor.spited_command[0], "kill")){
                 tsk_nr = atoi(executor.spited_command[1]);
                 if(executor.tasks[tsk_nr].task_pid != -1)
                     kill(executor.tasks[tsk_nr].task_pid, SIGINT);
             } else if(!strcmp(executor.spited_command[0], "sleep")){
+                ASSERT_ZERO(pthread_mutex_unlock(&executor.mutex));
                 usleep(1000*atoi(executor.spited_command[1]));
+                ASSERT_ZERO(pthread_mutex_lock(&executor.mutex));
             } else if(!strcmp(executor.spited_command[0], "quit")){ 
                 quiting = 0;
                 for(int i =0; executor.tasks_n >i;i ++){
